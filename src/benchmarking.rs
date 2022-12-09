@@ -16,5 +16,5 @@ benchmarks! {
 		assert_eq!(Something::<T>::get(), Some(s));
 	}
 
-	impl_benchmark_test_suite!(Metarium, crate::mock::new_test_ext(), crate::mock::Test);
+	impl_benchmark_test_suite!(Template, crate::mock::new_test_ext(), crate::mock::Test);
 }

@@ -51,6 +51,7 @@ impl system::Config for Test {
 
 impl pallet_metarium::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
+	type MaxKURIlength = frame_support::traits::ConstU32<64>;
 }
 
 // Build genesis storage according to the mock runtime.
