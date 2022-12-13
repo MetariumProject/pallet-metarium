@@ -100,6 +100,8 @@ pub mod pallet {
 		MaxKURILengthExceeded,
 		/// 404 for a SRC.
 		SRCNotFound,
+		/// SRC has already been added.
+		SRCAlreadyAdded,
 		/// SRC has already been deleted.
 		SRCAlreadyDeleted,
 	}
@@ -119,6 +121,8 @@ pub mod pallet {
 
 			let bounded_kuri: BoundedVec<u8, T::MaxKURIlength> =
 			kuri.try_into().map_err(|_| Error::<T>::MaxKURILengthExceeded)?;
+
+			ensure!(SRCs::<T>::get(bounded_kuri.clone()) == None, Error::<T>::SRCAlreadyAdded);
 
 			let info = SRCInfo {
 				kuri: bounded_kuri.clone(),
