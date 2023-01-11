@@ -37,6 +37,27 @@ pub mod pallet {
 		pub deleted: bool,
 	}
 
+	/// Service info
+	#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, Default, TypeInfo, MaxEncodedLen)]
+	pub struct ServiceInfo<ServiceId, IPAddress, SwarmKey, StatusFile, RFFFile, AccountId> {
+		/// scribe
+		pub scribe: AccountId,
+		/// key
+		pub service: AccountId,
+		/// id
+		pub id: ServiceId,
+		/// IP address
+		pub ip_address: IPAddress,
+		/// swarm-key
+		pub swarm_key: SwarmKey,
+		/// status-file
+		pub status: StatusFile,
+		/// rff-file
+		pub rff: RFFFile,
+		/// deleted
+		pub deleted: bool,
+	}
+
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
@@ -44,26 +65,54 @@ pub mod pallet {
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The maximum size of a SRC's KURI
 		type MaxKURIlength: Get<u32>;
+		/// The maximum size of a Service's ID
+		type MaxServiceIdLength: Get<u32>;
+		/// The maximum size of a Service's IP address
+		type MaxIPAddressLength: Get<u32>;
+		/// The maximum size of a Service's swarm-key
+		type MaxServiceSwarmKeyLength: Get<u32>;
+		/// The maximum size of a Service's status-file
+		type MaxServiceStatusFileLength: Get<u32>;
+		/// The maximum size of a Service's rff-file
+		type MaxServiceRFFFileLength: Get<u32>;
 	}
 
 	pub type KURI<T> = BoundedVec<u8, <T as Config>::MaxKURIlength>;
+	pub type ServiceId<T> = BoundedVec<u8, <T as Config>::MaxServiceIdLength>;
+	pub type IPAddress<T> = BoundedVec<u8, <T as Config>::MaxIPAddressLength>;
+	pub type SwarmKey<T> = BoundedVec<u8, <T as Config>::MaxServiceSwarmKeyLength>;
+	pub type StatusFile<T> = BoundedVec<u8, <T as Config>::MaxServiceStatusFileLength>;
+	pub type RFFFile<T> = BoundedVec<u8, <T as Config>::MaxServiceRFFFileLength>;
 
 	pub type SRCInfoOf<T> = SRCInfo<
 		KURI<T>,
 		<T as frame_system::Config>::AccountId,
 	>;
+	pub type ServiceInfoOf<T> = ServiceInfo<
+		ServiceId<T>,
+		IPAddress<T>,
+		SwarmKey<T>,
+		StatusFile<T>,
+		RFFFile<T>,
+		<T as frame_system::Config>::AccountId,
+	>;
 
 	// The pallet's runtime storage items.
-	// https://docs.substrate.io/main-docs/build/runtime-storage/
 	#[pallet::storage]
 	#[pallet::getter(fn total_srcs_created)]
-	// Learn more about declaring storage items:
-	// https://docs.substrate.io/main-docs/build/runtime-storage/#declaring-storage-items
 	pub type TotalSRCsCreated<T> = StorageValue<_, u64>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn total_services_created)]
+	pub type TotalServicesCreated<T> = StorageValue<_, u64>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn is_authorized_scribe)]
 	pub(super) type AuthorizedScribeMap<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, bool, ValueQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn is_service)]
+	pub(super) type AvailableServiceMap<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, bool, ValueQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn is_src_transfer_accepted)]
@@ -72,6 +121,10 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn srcs)]
 	pub(super) type SRCs<T: Config> = StorageMap<_, Blake2_128Concat, KURI<T>, SRCInfoOf<T>>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn services)]
+	pub(super) type Services<T: Config> = StorageMap<_, Blake2_128Concat, T::AccountId, ServiceInfoOf<T>>;
 
 	// Pallets use events to inform users when important changes are made.
 	// https://docs.substrate.io/main-docs/build/events-errors/
@@ -83,9 +136,13 @@ pub mod pallet {
 		ScribeAddedByAdmin(T::AccountId),
 		ScribeRemovedByAdmin(T::AccountId),
 		SRCCreated(BoundedVec<u8, T::MaxKURIlength>),
+		SRCDeleted(BoundedVec<u8, T::MaxKURIlength>),
+		SRCUpdated(BoundedVec<u8, T::MaxKURIlength>),
 		SRCTransferAccepted(BoundedVec<u8, T::MaxKURIlength>, T::AccountId),
 		SRCTransferred(BoundedVec<u8, T::MaxKURIlength>),
-		SRCDeleted(BoundedVec<u8, T::MaxKURIlength>),
+		ServiceCreated(T::AccountId),
+		ServiceDeleted(T::AccountId),
+		ServiceUpdated(T::AccountId),
 	}
 
 	// Errors inform users that something went wrong.
@@ -104,15 +161,36 @@ pub mod pallet {
 		SRCAlreadyAdded,
 		/// SRC has already been deleted.
 		SRCAlreadyDeleted,
+		/// A service ID is longer than the allowed limit.
+		MaxServiceIdLengthExceeded,
+		/// A service IP address is longer than the allowed limit.
+		MaxIPAddressLengthExceeded,
+		/// A service swarm key is longer than the allowed limit.
+		MaxServiceSwarmKeyLengthExceeded,
+		/// A service status file is longer than the allowed limit.
+		MaxServiceStatusFileLengthExceeded,
+		/// A service RFF file is longer than the allowed limit.
+		MaxServiceRFFFileLengthExceeded,
+		/// Service not found.
+		ServiceNotFound,
+		/// Service has already been added.
+		ServiceAlreadyAdded,
+		/// Service has already been deleted.
+		ServiceAlreadyDeleted,
 	}
 
-	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
-	// These functions materialize as "extrinsics", which are often compared to transactions.
-	// Dispatchable functions must be annotated with a weight and must return a DispatchResult.
+	// Dispatchable functions to interact with the pallet and invoke state changes.
+
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		/// An example dispatchable that takes a singles value as a parameter, writes the value to
-		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
+		
+		
+		////// SRC FUNCTIONS //////
+		
+		
+		/// As a scribe ///
+
+		/// Register a new SRC.
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
 		pub fn self_register_content(origin: OriginFor<T>, kuri: Vec<u8>) -> DispatchResult {
 			// Check that the extrinsic was signed and get the signer.
@@ -150,6 +228,7 @@ pub mod pallet {
 			Ok(())
 		}
 
+		/// Accept a transfer of a SRC.
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
 		pub fn accept_src_transfer(origin: OriginFor<T>, kuri: Vec<u8>) -> DispatchResult {
 			let signer = ensure_signed(origin)?;
@@ -167,6 +246,7 @@ pub mod pallet {
 			})
 		}
 
+		/// Transfer a SRC to another account.
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
 		pub fn transfer_src(origin: OriginFor<T>, to: T::AccountId, kuri: Vec<u8>) -> DispatchResult {
 			let signer = ensure_signed(origin)?;
@@ -184,6 +264,7 @@ pub mod pallet {
 			})
 		}
 
+		/// Delete a SRC.
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
 		pub fn delete_src(origin: OriginFor<T>, kuri: Vec<u8>) -> DispatchResult {
 			let signer = ensure_signed(origin)?;
@@ -200,25 +281,143 @@ pub mod pallet {
 			})
 		}
 
+
+		////// SERVICE FUNCTIONS //////
+
+		
+		/// As a scribe ///
+
+		/// Register a service.
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
-		pub fn force_update_scribe_authority_status(origin: OriginFor<T>, scribe: T::AccountId, status: bool) -> DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			ensure_root(origin)?;
-			
+		pub fn register_service(origin: OriginFor<T>, service_address: T::AccountId, service_id: Vec<u8>, ip_address: Vec<u8>, swarm_key: Vec<u8>, status_file: Vec<u8>, rff_file: Vec<u8>) -> DispatchResult {
+			let signer = ensure_signed(origin)?;
+			ensure!(Self::is_authorized_scribe(&signer), Error::<T>::CallForbidden);
+
+			let bounded_service_id: BoundedVec<u8, T::MaxServiceIdLength> =
+			service_id.try_into().map_err(|_| Error::<T>::MaxServiceIdLengthExceeded)?;
+			let bounded_ip_address: BoundedVec<u8, T::MaxIPAddressLength> =
+			ip_address.try_into().map_err(|_| Error::<T>::MaxIPAddressLengthExceeded)?;
+			let bounded_swarm_key: BoundedVec<u8, T::MaxServiceSwarmKeyLength> =
+			swarm_key.try_into().map_err(|_| Error::<T>::MaxServiceSwarmKeyLengthExceeded)?;
+			let bounded_status_file: BoundedVec<u8, T::MaxServiceStatusFileLength> =
+			status_file.try_into().map_err(|_| Error::<T>::MaxServiceStatusFileLengthExceeded)?;
+			let bounded_rff_file: BoundedVec<u8, T::MaxServiceRFFFileLength> =
+			rff_file.try_into().map_err(|_| Error::<T>::MaxServiceRFFFileLengthExceeded)?;
+
+			ensure!(Services::<T>::get(service_address.clone()) == None, Error::<T>::ServiceAlreadyAdded);
+
+			let info = ServiceInfo {
+				scribe: signer.clone(),
+				service: service_address.clone(),
+				id: bounded_service_id.clone(),
+				ip_address: bounded_ip_address.clone(),
+				swarm_key: bounded_swarm_key.clone(),
+				status: bounded_status_file.clone(),
+				rff: bounded_rff_file.clone(),
+				deleted: false,
+			};
+
 			// Update storage.
-			<AuthorizedScribeMap<T>>::insert(&scribe, status);
+
+			Services::<T>::insert(service_address.clone(), info);
+
+			match <TotalServicesCreated<T>>::get() {
+				None => {
+					<TotalServicesCreated<T>>::put(1);
+				}
+				Some(old) => {
+					let new = old.checked_add(1).ok_or(Error::<T>::StorageOverflow)?;
+					<TotalServicesCreated<T>>::put(new);
+				},
+			}
 
 			// Emit an event.
-			if status.eq(&true) {
-				Self::deposit_event(Event::ScribeAddedByAdmin(scribe));
-			}
-			else {
-				Self::deposit_event(Event::ScribeRemovedByAdmin(scribe));
-			}
-			// Return a successful DispatchResultWithPostInfo
+			Self::deposit_event(Event::ServiceCreated(service_address));
 			Ok(())
 		}
 
+		/// Update a service.
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn update_service(origin: OriginFor<T>, service_address: T::AccountId, service_id: Vec<u8>, ip_address: Vec<u8>, swarm_key: Vec<u8>, status_file: Vec<u8>, rff_file: Vec<u8>) -> DispatchResult {
+			let signer = ensure_signed(origin)?;
+			ensure!(Self::is_authorized_scribe(&signer), Error::<T>::CallForbidden);
+			
+			Services::<T>::try_mutate_exists(service_address.clone(), |service_info| -> DispatchResult {
+				let info = service_info.as_mut().ok_or(Error::<T>::ServiceNotFound)?;
+				ensure!(info.scribe == signer, Error::<T>::CallForbidden);
+				ensure!(info.deleted.eq(&false), Error::<T>::ServiceAlreadyDeleted);
+				let bounded_service_id: BoundedVec<u8, T::MaxServiceIdLength> =
+				service_id.try_into().map_err(|_| Error::<T>::MaxServiceIdLengthExceeded)?;
+				let bounded_ip_address: BoundedVec<u8, T::MaxIPAddressLength> =
+				ip_address.try_into().map_err(|_| Error::<T>::MaxIPAddressLengthExceeded)?;
+				let bounded_swarm_key: BoundedVec<u8, T::MaxServiceSwarmKeyLength> =
+				swarm_key.try_into().map_err(|_| Error::<T>::MaxServiceSwarmKeyLengthExceeded)?;
+				let bounded_status_file: BoundedVec<u8, T::MaxServiceStatusFileLength> =
+				status_file.try_into().map_err(|_| Error::<T>::MaxServiceStatusFileLengthExceeded)?;
+				let bounded_rff_file: BoundedVec<u8, T::MaxServiceRFFFileLength> =
+				rff_file.try_into().map_err(|_| Error::<T>::MaxServiceRFFFileLengthExceeded)?;
+				info.id = bounded_service_id.clone();
+				info.ip_address = bounded_ip_address.clone();
+				info.swarm_key = bounded_swarm_key.clone();
+				info.status = bounded_status_file.clone();
+				info.rff = bounded_rff_file.clone();
+				Self::deposit_event(Event::ServiceUpdated(service_address));
+				Ok(())
+			})
+		}
+
+		/// Delete a service.
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn delete_service(origin: OriginFor<T>, service_address: T::AccountId) -> DispatchResult {
+			let signer = ensure_signed(origin)?;
+			ensure!(Self::is_authorized_scribe(&signer), Error::<T>::CallForbidden);
+			
+			Services::<T>::try_mutate_exists(service_address.clone(), |service_info| -> DispatchResult {
+				let info = service_info.as_mut().ok_or(Error::<T>::ServiceNotFound)?;
+				ensure!(info.scribe == signer, Error::<T>::CallForbidden);
+				ensure!(info.deleted.eq(&false), Error::<T>::ServiceAlreadyDeleted);
+				info.deleted = true;
+	
+				Self::deposit_event(Event::ServiceDeleted(service_address));
+				Ok(())
+			})
+		}
+
+
+		/// As a service ///
+
+		/// Update own status
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn update_service_status(origin: OriginFor<T>, status_file: Vec<u8>, rff_file: Vec<u8>) -> DispatchResult {
+			// Check that the extrinsic was signed and get the signer.
+			let signer = ensure_signed(origin)?;
+
+			ensure!(Self::is_service(&signer), Error::<T>::CallForbidden);
+
+			// Update storage.
+			Services::<T>::try_mutate_exists(signer.clone(), |service_info| -> DispatchResult {
+				let info = service_info.as_mut().ok_or(Error::<T>::ServiceNotFound)?;
+				ensure!(info.deleted.eq(&false), Error::<T>::ServiceAlreadyDeleted);
+
+				let bounded_status_file: BoundedVec<u8, T::MaxServiceStatusFileLength> =
+				status_file.try_into().map_err(|_| Error::<T>::MaxServiceStatusFileLengthExceeded)?;
+				let bounded_rff_file: BoundedVec<u8, T::MaxServiceRFFFileLength> =
+				rff_file.try_into().map_err(|_| Error::<T>::MaxServiceRFFFileLengthExceeded)?;
+				info.status = bounded_status_file.clone();
+				info.rff = bounded_rff_file.clone();
+	
+				Self::deposit_event(Event::ServiceDeleted(signer));
+				Ok(())
+			})
+		}
+
+
+		////// SCRIBE FUNCTIONS //////
+		
+		
+		/// As a scribe ///
+
+		/// Update another scribe's status
 		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
 		pub fn update_scribe_authority_status(origin: OriginFor<T>, scribe: T::AccountId, status: bool) -> DispatchResult {
 			// Check that the extrinsic was signed and get the signer.
@@ -236,6 +435,88 @@ pub mod pallet {
 			else {
 				Self::deposit_event(Event::ScribeRemoved(signer, scribe));
 			}
+			// Return a successful DispatchResultWithPostInfo
+			Ok(())
+		}
+
+
+		/// ROOT FUNCTIONS ///
+
+
+		/// Update a scribe's status
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn force_update_scribe_authority_status(origin: OriginFor<T>, scribe: T::AccountId, status: bool) -> DispatchResult {
+			// Check that the extrinsic was signed and get the signer.
+			ensure_root(origin)?;
+			// Update storage.
+			<AuthorizedScribeMap<T>>::insert(&scribe, status);
+			// Emit an event.
+			if status.eq(&true) {
+				Self::deposit_event(Event::ScribeAddedByAdmin(scribe));
+			}
+			else {
+				Self::deposit_event(Event::ScribeRemovedByAdmin(scribe));
+			}
+			// Return a successful DispatchResultWithPostInfo
+			Ok(())
+		}
+
+		/// Update a SRC's info
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn force_update_src_info(origin: OriginFor<T>, kuri: Vec<u8>, owner: T::AccountId, scribe: T::AccountId, deleted: bool) -> DispatchResult {
+			// Check that the extrinsic was signed and get the signer.
+			ensure_root(origin)?;
+			
+			let bounded_kuri: BoundedVec<u8, T::MaxKURIlength> =
+			kuri.try_into().map_err(|_| Error::<T>::MaxKURILengthExceeded)?;
+
+			let info = SRCInfo {
+				kuri: bounded_kuri.clone(),
+				owner,
+				scribe,
+				deleted,
+			};
+
+			// Update storage.
+			SRCs::<T>::insert(bounded_kuri.clone(), info);
+
+			Self::deposit_event(Event::SRCUpdated(bounded_kuri));
+			// Return a successful DispatchResultWithPostInfo
+			Ok(())
+		}
+
+		/// Update a service's info
+		#[pallet::weight((10_000 + T::DbWeight::get().writes(1).ref_time(), Pays::No))]
+		pub fn force_update_service_info(origin: OriginFor<T>, scribe: T::AccountId, service_address: T::AccountId, service_id: Vec<u8>, ip_address: Vec<u8>, swarm_key: Vec<u8>, status_file: Vec<u8>, rff_file: Vec<u8>, deleted: bool) -> DispatchResult {
+			// Check that the extrinsic was signed and get the signer.
+			ensure_root(origin)?;
+			
+			let bounded_service_id: BoundedVec<u8, T::MaxServiceIdLength> =
+			service_id.try_into().map_err(|_| Error::<T>::MaxServiceIdLengthExceeded)?;
+			let bounded_ip_address: BoundedVec<u8, T::MaxIPAddressLength> =
+			ip_address.try_into().map_err(|_| Error::<T>::MaxIPAddressLengthExceeded)?;
+			let bounded_swarm_key: BoundedVec<u8, T::MaxServiceSwarmKeyLength> =
+			swarm_key.try_into().map_err(|_| Error::<T>::MaxServiceSwarmKeyLengthExceeded)?;
+			let bounded_status_file: BoundedVec<u8, T::MaxServiceStatusFileLength> =
+			status_file.try_into().map_err(|_| Error::<T>::MaxServiceStatusFileLengthExceeded)?;
+			let bounded_rff_file: BoundedVec<u8, T::MaxServiceRFFFileLength> =
+			rff_file.try_into().map_err(|_| Error::<T>::MaxServiceRFFFileLengthExceeded)?;
+
+			let info = ServiceInfo {
+				scribe,
+				service: service_address.clone(),
+				id: bounded_service_id.clone(),
+				ip_address: bounded_ip_address.clone(),
+				swarm_key: bounded_swarm_key.clone(),
+				status: bounded_status_file.clone(),
+				rff: bounded_rff_file.clone(),
+				deleted,
+			};
+
+			// Update storage.
+			Services::<T>::insert(service_address.clone(), info);
+
+			Self::deposit_event(Event::ServiceUpdated(service_address));
 			// Return a successful DispatchResultWithPostInfo
 			Ok(())
 		}

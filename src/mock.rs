@@ -52,6 +52,11 @@ impl system::Config for Test {
 impl pallet_metarium::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
 	type MaxKURIlength = frame_support::traits::ConstU32<64>;
+	type MaxServiceIdLength = frame_support::traits::ConstU32<64>;
+	type MaxIPAddressLength = frame_support::traits::ConstU32<64>;
+	type MaxServiceSwarmKeyLength = frame_support::traits::ConstU32<64>;
+	type MaxServiceStatusFileLength = frame_support::traits::ConstU32<64>;
+	type MaxServiceRFFFileLength = frame_support::traits::ConstU32<64>;
 }
 
 // Build genesis storage according to the mock runtime.
